@@ -1,0 +1,12 @@
+groups:
+  - name: platform-core-config_drift
+    rules:
+      - alert: OperationalIncidentDetected
+        expr: sum(rate(http_requests_total{service="platform-core",status=~"5.."}[5m])) / sum(rate(http_requests_total{service="platform-core"}[5m])) > 0.03
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Operational incident detected
+          description: Missing targeted alert or operational validation
+          runbook_url: https://runbooks.internal/platform-core/config_drift
