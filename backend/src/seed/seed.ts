@@ -4,6 +4,7 @@ import { seededIncidents } from "./seedData";
 import { calculateDebtScore } from "../services/debtService";
 
 
+
 export function seedDatabase() {
   const existing = db
     .prepare("SELECT COUNT(*) as count FROM incidents")
