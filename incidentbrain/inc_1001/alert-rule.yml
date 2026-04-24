@@ -1,0 +1,12 @@
+groups:
+  - name: payments-db-latency
+    rules:
+      - alert: PaymentsQueryLatencyP99High
+        expr: histogram_quantile(0.99, sum(rate(db_query_duration_seconds_bucket{service="payments-service"}[5m])) by (le)) > 0.5
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: Payments query latency p99 is elevated
+          description: Checkout queries are exceeding 500ms at p99 for 10 minutes.
+          runbook_url: https://runbooks.internal/payments/db-latency
