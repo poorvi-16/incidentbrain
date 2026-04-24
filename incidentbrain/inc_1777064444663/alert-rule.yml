@@ -1,0 +1,12 @@
+groups:
+  - name: catalog-api-cache_stampede
+    rules:
+      - alert: CacheStampedeDuringTrafficSpike
+        expr: sum(rate(cache_miss_total{service="catalog-api"}[5m])) > 800
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: Cache stampede during traffic spike
+          description: No alert on cache miss storm or fallback saturation
+          runbook_url: https://runbooks.internal/catalog-api/cache_stampede
