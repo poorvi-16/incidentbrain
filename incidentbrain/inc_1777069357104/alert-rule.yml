@@ -1,0 +1,12 @@
+groups:
+  - name: edge-api-config_drift
+    rules:
+      - alert: ConfigurationDriftCausedProductionInstability
+        expr: sum(rate(http_requests_total{service="edge-api",status=~"5.."}[5m])) / sum(rate(http_requests_total{service="edge-api"}[5m])) > 0.03
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Configuration drift caused production instability
+          description: No config drift validation or protected deployment guard
+          runbook_url: https://runbooks.internal/edge-api/config_drift
