@@ -1,0 +1,12 @@
+groups:
+  - name: payments-service-db_saturation
+    rules:
+      - alert: DatabasePerformanceDegradationAfterMigration
+        expr: histogram_quantile(0.99, sum(rate(db_query_duration_seconds_bucket{service="payments-service"}[5m])) by (le)) > 0.5
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: Database performance degradation after migration
+          description: No alert on RDS query latency p99 or connection pool saturation
+          runbook_url: https://runbooks.internal/payments-service/db_saturation
