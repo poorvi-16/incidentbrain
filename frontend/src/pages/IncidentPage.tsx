@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { api } from "../api/client";
-import type { IncidentDetail } from "../types/api";
+import type { ArtifactBundle, IncidentDetail } from "../types/api";
+import GithubPrModal from "../components/GithubPrModal";
+import CodeBlock from "../components/CodeBlock";
 
 type ArtifactTab = "alert_yaml" | "runbook_md" | "terraform_tf";
 
@@ -19,9 +21,18 @@ function getUrgencyColor(days: number) {
 }
 
 function getBadgeTone(value: string) {
-  if (value === "critical" || value === "architecture") return "bg-red-500/15 text-red-200 border-red-400/20";
-  if (value === "high" || value === "alert_rule") return "bg-amber-500/15 text-amber-200 border-amber-400/20";
-  if (value === "medium" || value === "runbook") return "bg-blue-500/15 text-blue-200 border-blue-400/20";
+  if (value === "critical" || value === "architecture") {
+    return "bg-red-500/15 text-red-200 border-red-400/20";
+  }
+
+  if (value === "high" || value === "alert_rule") {
+    return "bg-amber-500/15 text-amber-200 border-amber-400/20";
+  }
+
+  if (value === "medium" || value === "runbook") {
+    return "bg-blue-500/15 text-blue-200 border-blue-400/20";
+  }
+
   return "bg-emerald-500/15 text-emerald-200 border-emerald-400/20";
 }
 
@@ -33,18 +44,41 @@ function IncidentPage() {
   const { id } = useParams();
   const [incident, setIncident] = useState<IncidentDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [artifactLoading, setArtifactLoading] = useState(false);
+  const [resolveLoading, setResolveLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<ArtifactTab>("alert_yaml");
   const [copied, setCopied] = useState<ArtifactTab | null>(null);
+  const [prModalOpen, setPrModalOpen] = useState(false);
+
+  async function fetchIncident() {
+    const response = await api.get<IncidentDetail>(`/incidents/${id}`);
+    return response.data;
+  }
 
   useEffect(() => {
     async function load() {
       try {
-        const response = await api.get<IncidentDetail>(`/incidents/${id}`);
-        setIncident(response.data);
+        const data = await fetchIncident();
+        setIncident(data);
+
+        if (!data.artifacts && id) {
+          setArtifactLoading(true);
+
+          const artifactRes = await api.post<ArtifactBundle>(`/artifacts/${id}`);
+          setIncident((current) =>
+            current
+              ? {
+                  ...current,
+                  artifacts: artifactRes.data
+                }
+              : current
+          );
+        }
       } catch (error) {
         console.error("Failed to load incident", error);
       } finally {
         setLoading(false);
+        setArtifactLoading(false);
       }
     }
 
@@ -55,7 +89,10 @@ function IncidentPage() {
     return incident?.debt_scores.reduce((sum, row) => sum + row.score, 0) ?? 0;
   }, [incident]);
 
-  const debtReduction = useMemo(() => Number((totalDebt * 0.8).toFixed(2)), [totalDebt]);
+  const debtReduction = useMemo(
+    () => Number((totalDebt * 0.8).toFixed(2)),
+    [totalDebt]
+  );
 
   async function copyTabContent() {
     if (!incident?.artifacts) return;
@@ -65,12 +102,33 @@ function IncidentPage() {
     window.setTimeout(() => setCopied(null), 1500);
   }
 
+  async function handleResolveIncident() {
+    if (!incident || incident.status === "resolved") return;
+
+    setResolveLoading(true);
+
+    try {
+      const response = await api.patch<IncidentDetail>(
+        `/incidents/${incident.id}/resolve`
+      );
+      setIncident(response.data);
+    } catch (error) {
+      console.error("Failed to resolve incident", error);
+      alert("Failed to mark incident as resolved.");
+    } finally {
+      setResolveLoading(false);
+    }
+  }
+
   if (loading) {
     return (
       <main className="section-shell py-10">
         <div className="space-y-6">
           {Array.from({ length: 4 }).map((_, index) => (
-            <div key={index} className="dark-card h-48 animate-pulse bg-slate-800/70" />
+            <div
+              key={index}
+              className="dark-card h-48 animate-pulse bg-slate-800/70"
+            />
           ))}
         </div>
       </main>
@@ -83,7 +141,8 @@ function IncidentPage() {
         <div className="dark-card p-8">
           <h1 className="text-2xl font-bold text-white">Incident not found</h1>
           <p className="mt-4 text-slate-300">
-            We couldn’t load this incident. Head back to the dashboard and try again.
+            We couldn’t load this incident. Head back to the dashboard and try
+            again.
           </p>
           <Link
             to="/dashboard"
@@ -106,7 +165,19 @@ function IncidentPage() {
         >
           <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <p className="text-sm font-medium text-blue-300">Failure DNA</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <p className="text-sm font-medium text-blue-300">Failure DNA</p>
+                <span
+                  className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                    incident.status === "resolved"
+                      ? "bg-emerald-500/15 text-emerald-300"
+                      : "bg-amber-500/15 text-amber-300"
+                  }`}
+                >
+                  {incident.status}
+                </span>
+              </div>
+
               <h1 className="mt-3 text-3xl font-bold text-white sm:text-4xl">
                 {incident.dna.title}
               </h1>
@@ -115,28 +186,60 @@ function IncidentPage() {
               </p>
 
               <div className="mt-6 flex flex-wrap gap-3">
-                <span className={`rounded-full border px-3 py-1 text-sm ${getBadgeTone(incident.dna.trigger)}`}>
+                <span
+                  className={`rounded-full border px-3 py-1 text-sm ${getBadgeTone(
+                    incident.dna.trigger
+                  )}`}
+                >
                   {incident.dna.trigger}
                 </span>
-                <span className={`rounded-full border px-3 py-1 text-sm ${getBadgeTone(incident.dna.blast_radius)}`}>
+                <span
+                  className={`rounded-full border px-3 py-1 text-sm ${getBadgeTone(
+                    incident.dna.blast_radius
+                  )}`}
+                >
                   {incident.dna.blast_radius}
                 </span>
-                <span className={`rounded-full border px-3 py-1 text-sm ${getBadgeTone(incident.dna.fix_category)}`}>
+                <span
+                  className={`rounded-full border px-3 py-1 text-sm ${getBadgeTone(
+                    incident.dna.fix_category
+                  )}`}
+                >
                   {incident.dna.fix_category}
                 </span>
               </div>
             </div>
 
-            <div className="rounded-3xl border border-white/10 bg-slate-950/60 p-5 lg:min-w-[260px]">
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                Recurrence Prediction
-              </p>
-              <p className={`mt-3 text-3xl font-bold ${getUrgencyColor(incident.dna.recurrence_days)}`}>
-                {incident.dna.recurrence_days} days
-              </p>
-              <p className="mt-2 text-sm leading-6 text-slate-400">
-                Without this fix, next recurrence predicted in {incident.dna.recurrence_days} days.
-              </p>
+            <div className="space-y-4 lg:min-w-[280px]">
+              <div className="rounded-3xl border border-white/10 bg-slate-950/60 p-5">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                  Recurrence Prediction
+                </p>
+                <p
+                  className={`mt-3 text-3xl font-bold ${getUrgencyColor(
+                    incident.dna.recurrence_days
+                  )}`}
+                >
+                  {incident.dna.recurrence_days} days
+                </p>
+                <p className="mt-2 text-sm leading-6 text-slate-400">
+                  Without this fix, next recurrence predicted in{" "}
+                  {incident.dna.recurrence_days} days.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleResolveIncident}
+                disabled={resolveLoading || incident.status === "resolved"}
+                className="w-full rounded-full bg-emerald-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {incident.status === "resolved"
+                  ? "Incident Resolved"
+                  : resolveLoading
+                  ? "Resolving..."
+                  : "Mark Resolved"}
+              </button>
             </div>
           </div>
         </motion.section>
@@ -148,24 +251,37 @@ function IncidentPage() {
           className="dark-card p-6 sm:p-8"
         >
           <div className="mb-5">
-            <p className="text-sm font-medium text-blue-300">You’ve seen this before</p>
-            <h2 className="mt-2 text-2xl font-bold text-white">Pattern Matches</h2>
+            <p className="text-sm font-medium text-blue-300">
+              You’ve seen this before
+            </p>
+            <h2 className="mt-2 text-2xl font-bold text-white">
+              Pattern Matches
+            </h2>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-3">
             {incident.matches.map((match) => (
-              <div key={match.incident_id} className="rounded-3xl border border-white/10 bg-slate-950/50 p-5">
+              <div
+                key={match.incident_id}
+                className="rounded-3xl border border-white/10 bg-slate-950/50 p-5"
+              >
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <p className="text-sm font-semibold text-white">{match.title}</p>
-                    <p className="mt-1 text-xs text-slate-500">{formatDate(match.created_at)}</p>
+                    <p className="text-sm font-semibold text-white">
+                      {match.title}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {formatDate(match.created_at)}
+                    </p>
                   </div>
                   <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-slate-200">
                     {match.fix_status}
                   </span>
                 </div>
 
-                <p className="mt-4 text-sm leading-6 text-slate-400">{match.summary}</p>
+                <p className="mt-4 text-sm leading-6 text-slate-400">
+                  {match.summary}
+                </p>
 
                 <div className="mt-5">
                   <div className="mb-2 flex items-center justify-between text-xs text-slate-400">
@@ -192,17 +308,33 @@ function IncidentPage() {
         >
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm font-medium text-blue-300">Prevention Diff</p>
-              <h2 className="mt-2 text-2xl font-bold text-white">Generated prevention artifacts</h2>
+              <p className="text-sm font-medium text-blue-300">
+                Prevention Diff
+              </p>
+              <h2 className="mt-2 text-2xl font-bold text-white">
+                Generated prevention artifacts
+              </h2>
             </div>
 
-            <button
-              type="button"
-              onClick={copyTabContent}
-              className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100 transition hover:bg-white/10"
-            >
-              {copied === activeTab ? "Copied" : "Copy Current Artifact"}
-            </button>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={copyTabContent}
+                disabled={!incident.artifacts}
+                className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-100 transition hover:bg-white/10 disabled:opacity-50"
+              >
+                {copied === activeTab ? "Copied" : "Copy Current Artifact"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPrModalOpen(true)}
+                disabled={!incident.artifacts}
+                className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-400 disabled:opacity-50"
+              >
+                Open GitHub PR
+              </button>
+            </div>
           </div>
 
           <div className="mt-6 flex flex-wrap gap-3">
@@ -224,9 +356,27 @@ function IncidentPage() {
           </div>
 
           <div className="mt-6 overflow-x-auto rounded-[28px] border border-white/10 bg-slate-950/80 p-5">
-            <pre className="font-mono text-[13px] leading-6 text-slate-200 whitespace-pre-wrap">
-              {incident.artifacts?.[activeTab] ?? "No artifact available yet."}
-            </pre>
+            {artifactLoading ? (
+              <div className="space-y-3">
+                <div className="h-4 w-48 animate-pulse rounded bg-slate-700" />
+                <div className="h-4 w-full animate-pulse rounded bg-slate-800" />
+                <div className="h-4 w-5/6 animate-pulse rounded bg-slate-800" />
+                <div className="h-4 w-3/4 animate-pulse rounded bg-slate-800" />
+              </div>
+            ) : incident.artifacts ? (
+              <CodeBlock
+                code={incident.artifacts[activeTab]}
+                language={
+                  activeTab === "alert_yaml"
+                    ? "yaml"
+                    : activeTab === "runbook_md"
+                    ? "markdown"
+                    : "hcl"
+                }
+              />
+            ) : (
+              <p className="text-sm text-slate-400">No artifact available yet.</p>
+            )}
           </div>
         </motion.section>
 
@@ -236,26 +386,43 @@ function IncidentPage() {
           transition={{ delay: 0.24 }}
           className="dark-card p-6 sm:p-8"
         >
-          <p className="text-sm font-medium text-blue-300">Incident Debt Impact</p>
-          <h2 className="mt-2 text-2xl font-bold text-white">What shipping this fix changes</h2>
+          <p className="text-sm font-medium text-blue-300">
+            Incident Debt Impact
+          </p>
+          <h2 className="mt-2 text-2xl font-bold text-white">
+            What shipping this fix changes
+          </h2>
 
           <div className="mt-6 grid gap-4 md:grid-cols-2">
             <div className="rounded-3xl border border-white/10 bg-slate-950/50 p-6">
               <p className="text-sm text-slate-400">Current debt contribution</p>
-              <p className="mt-3 text-4xl font-bold text-amber-300">{totalDebt.toFixed(2)}</p>
+              <p className="mt-3 text-4xl font-bold text-amber-300">
+                {totalDebt.toFixed(2)}
+              </p>
             </div>
 
             <div className="rounded-3xl border border-white/10 bg-slate-950/50 p-6">
-              <p className="text-sm text-slate-400">Estimated reduction after merge</p>
-              <p className="mt-3 text-4xl font-bold text-emerald-300">{debtReduction.toFixed(2)}</p>
+              <p className="text-sm text-slate-400">
+                Estimated reduction after merge
+              </p>
+              <p className="mt-3 text-4xl font-bold text-emerald-300">
+                {debtReduction.toFixed(2)}
+              </p>
             </div>
           </div>
 
           <p className="mt-5 text-sm leading-7 text-slate-300">
-            Merging these fixes will reduce your debt by approximately {debtReduction.toFixed(2)} points across the affected services.
+            Merging these fixes will reduce your debt by approximately{" "}
+            {debtReduction.toFixed(2)} points across the affected services.
           </p>
         </motion.section>
       </div>
+
+      <GithubPrModal
+        incidentId={incident.id}
+        open={prModalOpen}
+        onClose={() => setPrModalOpen(false)}
+      />
     </main>
   );
 }

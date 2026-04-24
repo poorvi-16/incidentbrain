@@ -66,3 +66,9 @@ export interface IncidentDetail extends IncidentRecord {
   }>;
   matches: IncidentMatch[];
 }
+
+export interface ArtifactBundle {
+  alert_yaml: string;
+  runbook_md: string;
+  terraform_tf: string;
+}

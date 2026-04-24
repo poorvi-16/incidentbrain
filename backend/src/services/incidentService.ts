@@ -366,3 +366,37 @@ export function getDashboardData() {
     trend
   };
 }
+export function resolveIncident(incidentId: string) {
+  const existing = db
+    .prepare("SELECT id FROM incidents WHERE id = ?")
+    .get(incidentId) as { id: string } | undefined;
+
+  if (!existing) {
+    return null;
+  }
+
+  const resolvedAt = new Date().toISOString();
+
+  db.prepare(
+    `
+    UPDATE incidents
+    SET status = 'resolved',
+        pr_status = CASE
+          WHEN pr_status = 'unresolved' THEN 'merged'
+          ELSE pr_status
+        END,
+        resolved_at = ?
+    WHERE id = ?
+    `
+  ).run(resolvedAt, incidentId);
+
+  db.prepare(
+    `
+    UPDATE debt_scores
+    SET resolved = 1
+    WHERE incident_id = ?
+    `
+  ).run(incidentId);
+
+  return getIncidentById(incidentId);
+}
