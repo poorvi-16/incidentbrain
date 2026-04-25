@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { CheckCircle2, Copy, ShieldCheck } from "lucide-react";
+import { api } from "../api/client";
 import { loadSettings, saveSettings } from "../lib/settings";
 import { samplePostmortems } from "../data/samplePostmortems";
 
@@ -9,7 +10,10 @@ function SettingsPage() {
   const [defaultRepo, setDefaultRepo] = useState(initial.defaultRepo);
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [testStatus, setTestStatus] = useState<"idle" | "success" | "error">("idle");
+  const [testStatus, setTestStatus] = useState<"idle" | "success" | "error">(
+    "idle"
+  );
+  const [testMessage, setTestMessage] = useState("");
 
   function handleSave() {
     saveSettings({ githubToken, defaultRepo });
@@ -20,16 +24,51 @@ function SettingsPage() {
   async function handleTestConnection() {
     setTesting(true);
     setTestStatus("idle");
+    setTestMessage("");
 
     try {
-      if (!githubToken.trim()) {
-        throw new Error("Missing token");
+      const response = await api.post<{
+        ok: boolean;
+        user?: string;
+        repo?: string;
+        defaultBranch?: string;
+        error?: string;
+      }>("/github/test", {
+        repoUrl: defaultRepo,
+        token: githubToken
+      });
+
+      if (response.data?.ok) {
+        setTestStatus("success");
+        setTestMessage(
+          `Connected as ${response.data.user} to ${response.data.repo} (${response.data.defaultBranch})`
+        );
+      } else {
+        setTestStatus("error");
+        setTestMessage(response.data?.error ?? "GitHub validation failed");
+      }
+    } catch (error: unknown) {
+      let message = "GitHub validation failed";
+
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "response" in error &&
+        typeof (error as { response?: { data?: { error?: string } } }).response ===
+          "object"
+      ) {
+        const responseData = (
+          error as { response?: { data?: { error?: string } } }
+        ).response?.data;
+
+        if (responseData?.error) {
+          message = responseData.error;
+        }
       }
 
-      await new Promise((resolve) => window.setTimeout(resolve, 900));
-      setTestStatus("success");
-    } catch {
+      console.error(error);
       setTestStatus("error");
+      setTestMessage(message);
     } finally {
       setTesting(false);
     }
@@ -108,11 +147,13 @@ function SettingsPage() {
                 )}
 
                 {testStatus === "success" && (
-                  <p className="text-emerald-300">GitHub token looks usable for the upcoming PR flow.</p>
+                  <p className="text-emerald-300">{testMessage}</p>
                 )}
 
                 {testStatus === "error" && (
-                  <p className="text-red-300">Please add a GitHub token before testing the connection.</p>
+                  <p className="text-red-300">
+                    {testMessage || "Please check your token and repository."}
+                  </p>
                 )}
               </div>
             </div>
@@ -120,16 +161,27 @@ function SettingsPage() {
             <div className="rounded-3xl border border-white/10 bg-slate-950/50 p-6">
               <p className="text-sm font-medium text-blue-300">How this is used</p>
               <ul className="mt-4 space-y-3 text-sm leading-7 text-slate-300">
-                <li>The token will be used to create a branch, commit artifact files, and open a PR.</li>
-                <li>The default repository saves time during demos and repeated incident runs.</li>
-                <li>Settings are stored in local browser storage for hackathon convenience.</li>
+                <li>
+                  The token is used to create a branch, commit artifact files,
+                  and open a PR.
+                </li>
+                <li>
+                  The default repository saves time during demos and repeated
+                  incident runs.
+                </li>
+                <li>
+                  Settings are stored in local browser storage for hackathon
+                  convenience.
+                </li>
               </ul>
             </div>
           </div>
         </section>
 
         <section className="dark-card p-6 sm:p-8">
-          <p className="text-sm font-medium text-blue-300">Sample Post-mortem Library</p>
+          <p className="text-sm font-medium text-blue-300">
+            Sample Post-mortem Library
+          </p>
           <h2 className="mt-2 text-2xl font-bold text-white">
             Fast demo scenarios for IncidentBrain
           </h2>
@@ -140,7 +192,9 @@ function SettingsPage() {
                 key={sample.id}
                 className="rounded-3xl border border-white/10 bg-slate-950/50 p-5"
               >
-                <h3 className="text-lg font-semibold text-white">{sample.title}</h3>
+                <h3 className="text-lg font-semibold text-white">
+                  {sample.title}
+                </h3>
                 <p className="mt-2 text-sm leading-6 text-slate-400">
                   {sample.description}
                 </p>

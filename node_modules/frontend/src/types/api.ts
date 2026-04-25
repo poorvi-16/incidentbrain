@@ -57,6 +57,22 @@ export interface IncidentMatch {
   summary: string;
 }
 
+export interface AiRecommendation {
+  solution_summary: string;
+  recommended_alert_yaml: string;
+  recommended_runbook_md: string;
+  recommended_terraform_tf: string;
+  novelty_reason: string;
+}
+
+export interface IncidentWarnings {
+  lowHistoricalConfidence: boolean;
+  openAiUnavailable: boolean;
+  aiFallbackFailed: boolean;
+  manualReviewRequired: boolean;
+  manualReviewMessage: string | null;
+}
+
 export interface IncidentDetail extends IncidentRecord {
   debt_scores: Array<{
     service_name: string;
@@ -65,10 +81,6 @@ export interface IncidentDetail extends IncidentRecord {
     created_at: string;
   }>;
   matches: IncidentMatch[];
-}
-
-export interface ArtifactBundle {
-  alert_yaml: string;
-  runbook_md: string;
-  terraform_tf: string;
+  ai_recommendation: AiRecommendation | null;
+  warnings: IncidentWarnings;
 }

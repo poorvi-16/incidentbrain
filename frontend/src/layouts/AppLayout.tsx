@@ -1,16 +1,21 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import DemoModeBanner from "../components/DemoModeBanner";
 import { useHealth } from "../hooks/useHealth";
 
 const navItems = [
   { to: "/", label: "Analyze" },
   { to: "/dashboard", label: "Dashboard" },
-  { to: "/incident/inc_1001", label: "Incident" },
   { to: "/settings", label: "Settings" }
 ];
 
 function AppLayout() {
   const health = useHealth();
+  const location = useLocation();
+
+  const incidentMatch = location.pathname.match(/^\/incident\/([^/]+)$/);
+  const lastIncidentId = window.localStorage.getItem("lastIncidentId");
+  const incidentNavTarget =
+    incidentMatch?.[0] ?? (lastIncidentId ? `/incident/${lastIncidentId}` : "/dashboard");
 
   return (
     <div className="min-h-screen bg-brand-bg text-white">
@@ -39,6 +44,20 @@ function AppLayout() {
                 {item.label}
               </NavLink>
             ))}
+
+            <NavLink
+              to={incidentNavTarget}
+              className={({ isActive }) =>
+                [
+                  "rounded-full px-4 py-2 text-sm font-medium transition",
+                  isActive
+                    ? "bg-blue-500 text-white shadow-glow"
+                    : "text-slate-300 hover:bg-white/10 hover:text-white"
+                ].join(" ")
+              }
+            >
+              Incident
+            </NavLink>
           </nav>
         </div>
       </header>

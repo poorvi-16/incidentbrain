@@ -49,6 +49,7 @@ function IncidentPage() {
   const [activeTab, setActiveTab] = useState<ArtifactTab>("alert_yaml");
   const [copied, setCopied] = useState<ArtifactTab | null>(null);
   const [prModalOpen, setPrModalOpen] = useState(false);
+  const [showManualPopup, setShowManualPopup] = useState(false);
 
   async function fetchIncident() {
     const response = await api.get<IncidentDetail>(`/incidents/${id}`);
@@ -61,18 +62,29 @@ function IncidentPage() {
         const data = await fetchIncident();
         setIncident(data);
 
-        if (!data.artifacts && id) {
+        if (!data.artifacts && id && !data.warnings?.manualReviewRequired) {
           setArtifactLoading(true);
 
-          const artifactRes = await api.post<ArtifactBundle>(`/artifacts/${id}`);
-          setIncident((current) =>
-            current
-              ? {
-                  ...current,
-                  artifacts: artifactRes.data
-                }
-              : current
-          );
+          try {
+            const artifactRes = await api.post<ArtifactBundle>(`/artifacts/${id}`);
+            setIncident((current) =>
+              current
+                ? {
+                    ...current,
+                    artifacts: artifactRes.data
+                  }
+                : current
+            );
+          } catch {
+            setIncident((current) =>
+              current
+                ? {
+                    ...current,
+                    artifacts: null
+                  }
+                : current
+            );
+          }
         }
       } catch (error) {
         console.error("Failed to load incident", error);
@@ -84,6 +96,25 @@ function IncidentPage() {
 
     void load();
   }, [id]);
+
+  useEffect(() => {
+    if (incident?.warnings?.manualReviewRequired) {
+      setShowManualPopup(true);
+    }
+  }, [incident]);
+
+    useEffect(() => {
+    if (incident?.warnings?.manualReviewRequired) {
+      setShowManualPopup(true);
+    }
+  }, [incident]);
+
+  useEffect(() => {
+    if (incident?.id) {
+      window.localStorage.setItem("lastIncidentId", incident.id);
+    }
+  }, [incident?.id]);
+
 
   const totalDebt = useMemo(() => {
     return incident?.debt_scores.reduce((sum, row) => sum + row.score, 0) ?? 0;
@@ -244,6 +275,55 @@ function IncidentPage() {
           </div>
         </motion.section>
 
+        {incident.warnings.manualReviewRequired && (
+          <motion.section
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.04 }}
+            className="rounded-3xl border border-amber-400/20 bg-amber-500/10 p-6 text-amber-100"
+          >
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">
+              Manual Intervention Needed
+            </p>
+            <h2 className="mt-2 text-2xl font-bold">
+              No strong historical or AI-generated solution available
+            </h2>
+            <p className="mt-3 text-sm leading-7 text-amber-50/90">
+              {incident.warnings.manualReviewMessage}
+            </p>
+          </motion.section>
+        )}
+
+        {incident.ai_recommendation && (
+          <motion.section
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.06 }}
+            className="dark-card p-6 sm:p-8"
+          >
+            <p className="text-sm font-medium text-blue-300">AI Recommendation</p>
+            <h2 className="mt-2 text-2xl font-bold text-white">
+              Novel incident prevention guidance
+            </h2>
+
+            <div className="mt-5 space-y-5">
+              <div className="rounded-3xl border border-white/10 bg-slate-950/50 p-5">
+                <p className="text-sm font-semibold text-white">Solution Summary</p>
+                <p className="mt-3 text-sm leading-7 text-slate-300">
+                  {incident.ai_recommendation.solution_summary}
+                </p>
+              </div>
+
+              <div className="rounded-3xl border border-white/10 bg-slate-950/50 p-5">
+                <p className="text-sm font-semibold text-white">Why this looks novel</p>
+                <p className="mt-3 text-sm leading-7 text-slate-300">
+                  {incident.ai_recommendation.novelty_reason}
+                </p>
+              </div>
+            </div>
+          </motion.section>
+        )}
+
         <motion.section
           initial={{ opacity: 0, y: 18 }}
           animate={{ opacity: 1, y: 0 }}
@@ -259,45 +339,55 @@ function IncidentPage() {
             </h2>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-3">
-            {incident.matches.map((match) => (
-              <div
-                key={match.incident_id}
-                className="rounded-3xl border border-white/10 bg-slate-950/50 p-5"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold text-white">
-                      {match.title}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {formatDate(match.created_at)}
-                    </p>
+          {incident.matches.length === 0 ? (
+            <div className="rounded-3xl border border-white/10 bg-slate-950/50 p-6">
+              <p className="text-lg font-semibold text-white">No pattern found</p>
+              <p className="mt-3 text-sm leading-7 text-slate-400">
+                IncidentBrain could not find a confident historical incident pattern
+                for this case.
+              </p>
+            </div>
+          ) : (
+            <div className="grid gap-4 lg:grid-cols-3">
+              {incident.matches.map((match) => (
+                <div
+                  key={match.incident_id}
+                  className="rounded-3xl border border-white/10 bg-slate-950/50 p-5"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-semibold text-white">
+                        {match.title}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {formatDate(match.created_at)}
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-slate-200">
+                      {match.fix_status}
+                    </span>
                   </div>
-                  <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-slate-200">
-                    {match.fix_status}
-                  </span>
-                </div>
 
-                <p className="mt-4 text-sm leading-6 text-slate-400">
-                  {match.summary}
-                </p>
+                  <p className="mt-4 text-sm leading-6 text-slate-400">
+                    {match.summary}
+                  </p>
 
-                <div className="mt-5">
-                  <div className="mb-2 flex items-center justify-between text-xs text-slate-400">
-                    <span>Similarity</span>
-                    <span>{match.similarity}%</span>
-                  </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-slate-700">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-blue-400 to-cyan-300"
-                      style={{ width: `${match.similarity}%` }}
-                    />
+                  <div className="mt-5">
+                    <div className="mb-2 flex items-center justify-between text-xs text-slate-400">
+                      <span>Similarity</span>
+                      <span>{match.similarity}%</span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-slate-700">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-blue-400 to-cyan-300"
+                        style={{ width: `${match.similarity}%` }}
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </motion.section>
 
         <motion.section
@@ -343,11 +433,12 @@ function IncidentPage() {
                 key={tab}
                 type="button"
                 onClick={() => setActiveTab(tab)}
+                disabled={!incident.artifacts}
                 className={[
                   "rounded-full px-4 py-2 text-sm font-medium transition",
                   activeTab === tab
                     ? "bg-blue-500 text-white"
-                    : "border border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
+                    : "border border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 disabled:opacity-50"
                 ].join(" ")}
               >
                 {tabLabels[tab]}
@@ -375,7 +466,9 @@ function IncidentPage() {
                 }
               />
             ) : (
-              <p className="text-sm text-slate-400">No artifact available yet.</p>
+              <p className="text-sm text-slate-400">
+                No artifact available yet. Please review and create the fix manually.
+              </p>
             )}
           </div>
         </motion.section>
@@ -423,6 +516,32 @@ function IncidentPage() {
         open={prModalOpen}
         onClose={() => setPrModalOpen(false)}
       />
+
+      {showManualPopup && incident?.warnings?.manualReviewMessage && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-[28px] border border-amber-400/20 bg-slate-900 p-6 shadow-2xl">
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-300">
+              Manual Review Required
+            </p>
+            <h3 className="mt-2 text-2xl font-bold text-white">
+              Automatic fix could not be completed
+            </h3>
+            <p className="mt-4 text-sm leading-7 text-slate-300">
+              {incident.warnings.manualReviewMessage}
+            </p>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowManualPopup(false)}
+                className="rounded-full bg-amber-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-amber-400"
+              >
+                Understood
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

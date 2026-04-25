@@ -58,7 +58,7 @@ function inferPromQl(trigger: string, primaryService: string) {
 function inferTerraformGuard(
   trigger: string,
   primaryService: string,
-  detectionGap: string
+  _detectionGap: string
 ) {
   const serviceKey = primaryService.replace(/-/g, "_");
 
@@ -190,6 +190,42 @@ Implement a ${dna.fix_category} fix for ${primaryService}, add explicit detectio
   };
 }
 
+function hasStrongHistoricalMatch(
+  incidentId: string,
+  trigger: string,
+  fixCategory: string
+) {
+  if (trigger === "novel_incident") {
+    return false;
+  }
+
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        failure_dna.trigger,
+        failure_dna.fix_category
+      FROM incidents
+      JOIN failure_dna ON failure_dna.incident_id = incidents.id
+      WHERE incidents.id != ?
+      `
+    )
+    .all(incidentId) as Array<{
+    trigger: string;
+    fix_category: string;
+  }>;
+
+  const scores = rows.map((row) => {
+    let similarity = 35;
+    if (row.trigger === trigger) similarity += 40;
+    if (row.fix_category === fixCategory) similarity += 25;
+    return similarity;
+  });
+
+  const topSimilarity = scores.length > 0 ? Math.max(...scores) : 0;
+  return topSimilarity >= 60;
+}
+
 export function getArtifactsForIncident(incidentId: string) {
   const existing = db
     .prepare(
@@ -249,7 +285,42 @@ export function generateAndStoreArtifacts(incidentId: string) {
     return null;
   }
 
-  const artifacts = generateArtifactsFromDna(dna);
+  const aiRecommendation = db
+    .prepare(
+      `
+      SELECT
+        recommended_alert_yaml,
+        recommended_runbook_md,
+        recommended_terraform_tf
+      FROM ai_recommendations
+      WHERE incident_id = ?
+      `
+    )
+    .get(incidentId) as
+    | {
+        recommended_alert_yaml: string;
+        recommended_runbook_md: string;
+        recommended_terraform_tf: string;
+      }
+    | undefined;
+
+  const strongMatch = hasStrongHistoricalMatch(
+    incidentId,
+    dna.trigger,
+    dna.fix_category
+  );
+
+  if (!strongMatch && !aiRecommendation) {
+    return null;
+  }
+
+  const artifacts = aiRecommendation
+    ? {
+        alert_yaml: aiRecommendation.recommended_alert_yaml,
+        runbook_md: aiRecommendation.recommended_runbook_md,
+        terraform_tf: aiRecommendation.recommended_terraform_tf
+      }
+    : generateArtifactsFromDna(dna);
 
   db.prepare(
     `

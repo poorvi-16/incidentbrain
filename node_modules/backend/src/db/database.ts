@@ -12,3 +12,4 @@ const dbPath = path.join(dataDir, "incidentbrain.db");
 
 export const db = new Database(dbPath);
 db.pragma("journal_mode = WAL");
+db.pragma("foreign_keys = ON");

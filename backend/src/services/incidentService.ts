@@ -1,4 +1,5 @@
 import { db } from "../db/database";
+import { getAiRecommendationForIncident } from "./aiRecommendationService";
 
 type BlastRadius = "low" | "medium" | "high" | "critical";
 type FixCategory = "alert_rule" | "runbook" | "terraform_guard" | "architecture";
@@ -20,7 +21,7 @@ type FailureDnaRow = {
   trigger: string;
   detection_gap: string;
   blast_radius: BlastRadius;
-  fix_category: FixCategory;
+  fix_category: FixCategory | "novel_incident";
   affected_services: string;
   summary: string;
   recurrence_days: number;
@@ -33,66 +34,14 @@ type ArtifactRow = {
   terraform_tf: string;
 };
 
-function getFailureDnaMap() {
-  const rows = db
-    .prepare(
-      `
-      SELECT
-        incident_id,
-        title,
-        trigger,
-        detection_gap,
-        blast_radius,
-        fix_category,
-        affected_services,
-        summary,
-        recurrence_days
-      FROM failure_dna
-      `
-    )
-    .all() as FailureDnaRow[];
-
-  return new Map(
-    rows.map((row) => [
-      row.incident_id,
-      {
-        title: row.title,
-        trigger: row.trigger,
-        detection_gap: row.detection_gap,
-        blast_radius: row.blast_radius,
-        fix_category: row.fix_category,
-        affected_services: JSON.parse(row.affected_services) as string[],
-        summary: row.summary,
-        recurrence_days: row.recurrence_days
-      }
-    ])
-  );
-}
-
-function getArtifactMap() {
-  const rows = db
-    .prepare(
-      `
-      SELECT
-        incident_id,
-        alert_yaml,
-        runbook_md,
-        terraform_tf
-      FROM artifacts
-      `
-    )
-    .all() as ArtifactRow[];
-
-  return new Map(
-    rows.map((row) => [
-      row.incident_id,
-      {
-        alert_yaml: row.alert_yaml,
-        runbook_md: row.runbook_md,
-        terraform_tf: row.terraform_tf
-      }
-    ])
-  );
+function safeJsonParseArray(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 function findMatchesForIncident(
@@ -100,6 +49,10 @@ function findMatchesForIncident(
   trigger: string,
   fixCategory: string
 ) {
+  if (trigger === "novel_incident") {
+    return [];
+  }
+
   const rows = db
     .prepare(
       `
@@ -129,7 +82,6 @@ function findMatchesForIncident(
   return rows
     .map((row) => {
       let similarity = 35;
-
       if (row.trigger === trigger) similarity += 40;
       if (row.fix_category === fixCategory) similarity += 25;
 
@@ -164,20 +116,64 @@ export function getAllIncidents() {
     )
     .all() as IncidentRow[];
 
-  const dnaMap = getFailureDnaMap();
-  const artifactMap = getArtifactMap();
+  return incidents.map((incident) => {
+    const dna = db
+      .prepare(
+        `
+        SELECT
+          title,
+          trigger,
+          detection_gap,
+          blast_radius,
+          fix_category,
+          affected_services,
+          summary,
+          recurrence_days
+        FROM failure_dna
+        WHERE incident_id = ?
+        `
+      )
+      .get(incident.id) as Omit<FailureDnaRow, "incident_id"> | undefined;
 
-  return incidents.map((incident) => ({
-    id: incident.id,
-    source_text: incident.source_text,
-    status: incident.status,
-    pr_url: incident.pr_url,
-    pr_status: incident.pr_status,
-    created_at: incident.created_at,
-    resolved_at: incident.resolved_at,
-    dna: dnaMap.get(incident.id) ?? null,
-    artifacts: artifactMap.get(incident.id) ?? null
-  }));
+    const artifacts = db
+      .prepare(
+        `
+        SELECT alert_yaml, runbook_md, terraform_tf
+        FROM artifacts
+        WHERE incident_id = ?
+        `
+      )
+      .get(incident.id) as Omit<ArtifactRow, "incident_id"> | undefined;
+
+    return {
+      id: incident.id,
+      source_text: incident.source_text,
+      status: incident.status,
+      pr_url: incident.pr_url,
+      pr_status: incident.pr_status,
+      created_at: incident.created_at,
+      resolved_at: incident.resolved_at,
+      dna: dna
+        ? {
+            title: dna.title,
+            trigger: dna.trigger,
+            detection_gap: dna.detection_gap,
+            blast_radius: dna.blast_radius,
+            fix_category: dna.fix_category,
+            affected_services: safeJsonParseArray(dna.affected_services),
+            summary: dna.summary,
+            recurrence_days: dna.recurrence_days
+          }
+        : null,
+      artifacts: artifacts
+        ? {
+            alert_yaml: artifacts.alert_yaml,
+            runbook_md: artifacts.runbook_md,
+            terraform_tf: artifacts.terraform_tf
+          }
+        : null
+    };
+  });
 }
 
 export function getIncidentById(incidentId: string) {
@@ -206,7 +202,6 @@ export function getIncidentById(incidentId: string) {
     .prepare(
       `
       SELECT
-        incident_id,
         title,
         trigger,
         detection_gap,
@@ -219,13 +214,12 @@ export function getIncidentById(incidentId: string) {
       WHERE incident_id = ?
       `
     )
-    .get(incidentId) as FailureDnaRow | undefined;
+    .get(incidentId) as Omit<FailureDnaRow, "incident_id"> | undefined;
 
   const artifacts = db
     .prepare(
       `
       SELECT
-        incident_id,
         alert_yaml,
         runbook_md,
         terraform_tf
@@ -233,7 +227,7 @@ export function getIncidentById(incidentId: string) {
       WHERE incident_id = ?
       `
     )
-    .get(incidentId) as ArtifactRow | undefined;
+    .get(incidentId) as Omit<ArtifactRow, "incident_id"> | undefined;
 
   const debtRows = db
     .prepare(
@@ -254,9 +248,24 @@ export function getIncidentById(incidentId: string) {
     created_at: string;
   }>;
 
-  const matches = dna
-    ? findMatchesForIncident(incidentId, dna.trigger, dna.fix_category)
-    : [];
+  const trigger = dna?.trigger ?? "novel_incident";
+  const fixCategory = dna?.fix_category ?? "architecture";
+
+  const rawMatches = findMatchesForIncident(incidentId, trigger, fixCategory);
+  const aiRecommendation = getAiRecommendationForIncident(incidentId);
+  const topSimilarity = rawMatches[0]?.similarity ?? 0;
+  const lowHistoricalConfidence =
+    trigger === "novel_incident" || topSimilarity < 60;
+  const openAiUnavailable = lowHistoricalConfidence && !process.env.OPENAI_API_KEY;
+  const aiFallbackFailed =
+    lowHistoricalConfidence && !!process.env.OPENAI_API_KEY && !aiRecommendation;
+  const manualReviewRequired =
+    trigger === "novel_incident" && (openAiUnavailable || aiFallbackFailed);
+
+  const matches = manualReviewRequired ? [] : rawMatches;
+  const manualReviewMessage = manualReviewRequired
+    ? "IncidentBrain could not confidently solve this incident automatically. Please review manually and create the fix with an SRE or engineering owner."
+    : null;
 
   return {
     id: incident.id,
@@ -273,12 +282,14 @@ export function getIncidentById(incidentId: string) {
           detection_gap: dna.detection_gap,
           blast_radius: dna.blast_radius,
           fix_category: dna.fix_category,
-          affected_services: JSON.parse(dna.affected_services) as string[],
+          affected_services: safeJsonParseArray(dna.affected_services),
           summary: dna.summary,
           recurrence_days: dna.recurrence_days
         }
       : null,
-    artifacts: artifacts
+    artifacts: manualReviewRequired
+      ? null
+      : artifacts
       ? {
           alert_yaml: artifacts.alert_yaml,
           runbook_md: artifacts.runbook_md,
@@ -286,7 +297,15 @@ export function getIncidentById(incidentId: string) {
         }
       : null,
     debt_scores: debtRows,
-    matches
+    matches,
+    ai_recommendation: aiRecommendation,
+    warnings: {
+      lowHistoricalConfidence,
+      openAiUnavailable,
+      aiFallbackFailed,
+      manualReviewRequired,
+      manualReviewMessage
+    }
   };
 }
 
@@ -296,16 +315,24 @@ export function getDashboardData() {
       `
       SELECT
         COUNT(*) as total_incidents,
-        SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_incidents,
         SUM(CASE WHEN pr_status IN ('open', 'merged') THEN 1 ELSE 0 END) as prs_generated
       FROM incidents
       `
     )
     .get() as {
     total_incidents: number;
-    open_incidents: number;
     prs_generated: number;
   };
+
+  const openDebt = db
+    .prepare(
+      `
+      SELECT COUNT(*) as count
+      FROM debt_scores
+      WHERE resolved = 0
+      `
+    )
+    .get() as { count: number };
 
   const recurrence = db
     .prepare(
@@ -323,7 +350,7 @@ export function getDashboardData() {
       `
       SELECT
         service_name,
-        ROUND(SUM(score), 2) as score,
+        ROUND(SUM(CASE WHEN resolved = 0 THEN score ELSE 0 END), 2) as score,
         SUM(CASE WHEN resolved = 0 THEN 1 ELSE 0 END) as open_incidents
       FROM debt_scores
       GROUP BY service_name
@@ -359,13 +386,14 @@ export function getDashboardData() {
 
   return {
     total_incidents: totals.total_incidents ?? 0,
-    open_debt_items: totals.open_incidents ?? 0,
+    open_debt_items: openDebt.count ?? 0,
     avg_recurrence_risk: avgRecurrenceRisk,
     prs_generated: totals.prs_generated ?? 0,
     debt_by_service: debtByService,
     trend
   };
 }
+
 export function resolveIncident(incidentId: string) {
   const existing = db
     .prepare("SELECT id FROM incidents WHERE id = ?")
@@ -399,4 +427,17 @@ export function resolveIncident(incidentId: string) {
   ).run(incidentId);
 
   return getIncidentById(incidentId);
+}
+
+export function deleteIncident(incidentId: string) {
+  const existing = db
+    .prepare("SELECT id FROM incidents WHERE id = ?")
+    .get(incidentId) as { id: string } | undefined;
+
+  if (!existing) {
+    return false;
+  }
+
+  db.prepare("DELETE FROM incidents WHERE id = ?").run(incidentId);
+  return true;
 }

@@ -47,9 +47,22 @@ export function initializeSchema() {
       FOREIGN KEY (incident_id) REFERENCES incidents(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS ai_recommendations (
+      id TEXT PRIMARY KEY,
+      incident_id TEXT NOT NULL,
+      solution_summary TEXT NOT NULL,
+      recommended_alert_yaml TEXT NOT NULL,
+      recommended_runbook_md TEXT NOT NULL,
+      recommended_terraform_tf TEXT NOT NULL,
+      novelty_reason TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (incident_id) REFERENCES incidents(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_failure_dna_incident_id ON failure_dna(incident_id);
     CREATE INDEX IF NOT EXISTS idx_artifacts_incident_id ON artifacts(incident_id);
     CREATE INDEX IF NOT EXISTS idx_debt_scores_incident_id ON debt_scores(incident_id);
     CREATE INDEX IF NOT EXISTS idx_debt_scores_service_name ON debt_scores(service_name);
+    CREATE INDEX IF NOT EXISTS idx_ai_recommendations_incident_id ON ai_recommendations(incident_id);
   `);
 }

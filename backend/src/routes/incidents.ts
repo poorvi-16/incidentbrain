@@ -2,7 +2,8 @@ import { Router } from "express";
 import {
   getAllIncidents,
   getIncidentById,
-  resolveIncident
+  resolveIncident,
+  deleteIncident
 } from "../services/incidentService";
 
 const router = Router();
@@ -30,6 +31,16 @@ router.patch("/:id/resolve", (req, res) => {
   }
 
   return res.json(incident);
+});
+
+router.delete("/:id", (req, res) => {
+  const deleted = deleteIncident(req.params.id);
+
+  if (!deleted) {
+    return res.status(404).json({ error: "Incident not found" });
+  }
+
+  return res.json({ ok: true });
 });
 
 export default router;
