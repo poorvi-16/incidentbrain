@@ -325,12 +325,12 @@ For production-like cloud usage, migrate from SQLite to managed Postgres.
 - team ownership mapping
 - Slack / PagerDuty integration
 
-## One-Line Judge Pitch
+## One-Line Pitch
 
 **IncidentBrain Advanced is an AI-powered cloud resilience platform that transforms postmortems into prevention artifacts, blast radius simulations, recurrence forecasts, and actionable reliability intelligence.**
 
 ## Team Presentation Summary
 
-If you need a short summary for judges:
+
 
 > IncidentBrain helps engineering teams move from reactive postmortem writing to proactive cloud resilience. It analyzes incidents, predicts recurrence, simulates blast radius, and generates the technical changes needed to prevent future outages.
