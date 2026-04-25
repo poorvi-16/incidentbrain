@@ -36,6 +36,44 @@ function getBadgeTone(value: string) {
   return "bg-emerald-500/15 text-emerald-200 border-emerald-400/20";
 }
 
+function getSimulationSeverityTone(value: string) {
+  if (value === "severe") {
+    return "bg-rose-500/15 text-rose-200 border-rose-400/20";
+  }
+
+  if (value === "critical") {
+    return "bg-red-500/15 text-red-200 border-red-400/20";
+  }
+
+  if (value === "elevated") {
+    return "bg-amber-500/15 text-amber-200 border-amber-400/20";
+  }
+
+  return "bg-emerald-500/15 text-emerald-200 border-emerald-400/20";
+}
+
+function getForecastScopeTone(value: string) {
+  if (value === "platform-wide") {
+    return "bg-rose-500/15 text-rose-200 border-rose-400/20";
+  }
+
+  if (value === "multi-region") {
+    return "bg-red-500/15 text-red-200 border-red-400/20";
+  }
+
+  if (value === "regional") {
+    return "bg-amber-500/15 text-amber-200 border-amber-400/20";
+  }
+
+  return "bg-emerald-500/15 text-emerald-200 border-emerald-400/20";
+}
+
+function getRegionalRiskBarTone(risk: number) {
+  if (risk >= 80) return "from-rose-400 to-red-400";
+  if (risk >= 60) return "from-amber-300 to-orange-400";
+  return "from-emerald-300 to-cyan-300";
+}
+
 function formatDate(date: string) {
   return new Date(date).toLocaleDateString();
 }
@@ -98,12 +136,6 @@ function IncidentPage() {
   }, [id]);
 
   useEffect(() => {
-    if (incident?.warnings?.manualReviewRequired) {
-      setShowManualPopup(true);
-    }
-  }, [incident]);
-
-    useEffect(() => {
     if (incident?.warnings?.manualReviewRequired) {
       setShowManualPopup(true);
     }
@@ -274,6 +306,221 @@ function IncidentPage() {
             </div>
           </div>
         </motion.section>
+
+        {incident.blast_radius_simulation && (
+          <motion.section
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.03 }}
+            className="dark-card p-6 sm:p-8"
+          >
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-sm font-medium text-cyan-300">
+                  Blast Radius Simulator
+                </p>
+                <h2 className="mt-2 text-2xl font-bold text-white">
+                  How this incident spreads across the cloud stack
+                </h2>
+                <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-300">
+                  {incident.blast_radius_simulation.estimated_user_impact}
+                </p>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-3xl border border-white/10 bg-slate-950/60 p-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500">
+                    If Unfixed
+                  </p>
+                  <span
+                    className={`mt-3 inline-flex rounded-full border px-3 py-1 text-sm font-semibold capitalize ${getSimulationSeverityTone(
+                      incident.blast_radius_simulation.severity_if_unfixed
+                    )}`}
+                  >
+                    {incident.blast_radius_simulation.severity_if_unfixed}
+                  </span>
+                </div>
+
+                <div className="rounded-3xl border border-white/10 bg-slate-950/60 p-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500">
+                    After Fix
+                  </p>
+                  <span
+                    className={`mt-3 inline-flex rounded-full border px-3 py-1 text-sm font-semibold capitalize ${getSimulationSeverityTone(
+                      incident.blast_radius_simulation.severity_after_fix
+                    )}`}
+                  >
+                    {incident.blast_radius_simulation.severity_after_fix}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 grid gap-4 lg:grid-cols-3">
+              <div className="rounded-3xl border border-white/10 bg-slate-950/50 p-5">
+                <p className="text-sm font-semibold text-white">
+                  Directly Impacted Services
+                </p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {incident.blast_radius_simulation.directly_impacted_services.map(
+                    (service) => (
+                      <span
+                        key={service}
+                        className="rounded-full border border-cyan-400/20 bg-cyan-500/10 px-3 py-1 text-xs font-semibold text-cyan-100"
+                      >
+                        {service}
+                      </span>
+                    )
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-white/10 bg-slate-950/50 p-5">
+                <p className="text-sm font-semibold text-white">
+                  Downstream Services
+                </p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {incident.blast_radius_simulation.downstream_services.map((service) => (
+                    <span
+                      key={service}
+                      className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-slate-200"
+                    >
+                      {service}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-white/10 bg-slate-950/50 p-5">
+                <p className="text-sm font-semibold text-white">Affected Regions</p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {incident.blast_radius_simulation.affected_regions.map((region) => (
+                    <span
+                      key={region}
+                      className="rounded-full border border-indigo-400/20 bg-indigo-500/10 px-3 py-1 text-xs font-semibold text-indigo-100"
+                    >
+                      {region}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-4 lg:grid-cols-[1.2fr_1fr]">
+              <div className="rounded-3xl border border-white/10 bg-slate-950/50 p-5">
+                <p className="text-sm font-semibold text-white">Likely Entry Points</p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {incident.blast_radius_simulation.likely_entry_points.map((entry) => (
+                    <span
+                      key={entry}
+                      className="rounded-full border border-amber-400/20 bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-100"
+                    >
+                      {entry}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-white/10 bg-slate-950/50 p-5">
+                <p className="text-sm font-semibold text-white">
+                  Containment Actions
+                </p>
+                <div className="mt-4 space-y-3">
+                  {incident.blast_radius_simulation.containment_actions.map(
+                    (action, index) => (
+                      <div key={action} className="flex gap-3">
+                        <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-500/20 text-xs font-semibold text-blue-100">
+                          {index + 1}
+                        </span>
+                        <p className="text-sm leading-6 text-slate-300">{action}</p>
+                      </div>
+                    )
+                  )}
+                </div>
+              </div>
+            </div>
+          </motion.section>
+        )}
+
+        {incident.failure_forecast && (
+          <motion.section
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.035 }}
+            className="dark-card p-6 sm:p-8"
+          >
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-sm font-medium text-indigo-300">
+                  Failure Forecast
+                </p>
+                <h2 className="mt-2 text-2xl font-bold text-white">
+                  Predicting the next recurrence before it reaches production scale
+                </h2>
+                <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-300">
+                  {incident.failure_forecast.executive_summary}
+                </p>
+              </div>
+
+              <div className="rounded-3xl border border-white/10 bg-slate-950/60 p-5 lg:min-w-[280px]">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-500">
+                  Recurrence Probability
+                </p>
+                <p className="mt-3 text-4xl font-bold text-white">
+                  {incident.failure_forecast.recurrence_probability}%
+                </p>
+                <p className="mt-2 text-sm text-slate-400">
+                  Confidence:{" "}
+                  <span className="font-semibold capitalize text-slate-200">
+                    {incident.failure_forecast.confidence}
+                  </span>
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_1.2fr]">
+              <div className="rounded-3xl border border-white/10 bg-slate-950/50 p-5">
+                <p className="text-sm font-semibold text-white">Forecast Scope</p>
+                <span
+                  className={`mt-4 inline-flex rounded-full border px-3 py-1 text-sm font-semibold capitalize ${getForecastScopeTone(
+                    incident.failure_forecast.scope
+                  )}`}
+                >
+                  {incident.failure_forecast.scope}
+                </span>
+
+                <p className="mt-5 text-sm font-semibold text-white">
+                  Primary Risk Driver
+                </p>
+                <p className="mt-3 text-sm leading-7 text-slate-300">
+                  {incident.failure_forecast.primary_risk_driver}
+                </p>
+              </div>
+
+              <div className="rounded-3xl border border-white/10 bg-slate-950/50 p-5">
+                <p className="text-sm font-semibold text-white">Regional Risk Profile</p>
+                <div className="mt-5 space-y-4">
+                  {incident.failure_forecast.regional_risk.map((entry) => (
+                    <div key={entry.region}>
+                      <div className="mb-2 flex items-center justify-between text-sm">
+                        <span className="font-medium text-slate-200">{entry.region}</span>
+                        <span className="text-slate-400">{entry.risk}%</span>
+                      </div>
+                      <div className="h-2.5 overflow-hidden rounded-full bg-slate-800">
+                        <div
+                          className={`h-full rounded-full bg-gradient-to-r ${getRegionalRiskBarTone(
+                            entry.risk
+                          )}`}
+                          style={{ width: `${entry.risk}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </motion.section>
+        )}
 
         {incident.warnings.manualReviewRequired && (
           <motion.section

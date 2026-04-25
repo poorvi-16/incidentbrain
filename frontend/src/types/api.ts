@@ -73,6 +73,29 @@ export interface IncidentWarnings {
   manualReviewMessage: string | null;
 }
 
+export interface BlastRadiusSimulation {
+  directly_impacted_services: string[];
+  downstream_services: string[];
+  affected_regions: string[];
+  likely_entry_points: string[];
+  estimated_user_impact: string;
+  severity_if_unfixed: "contained" | "elevated" | "critical" | "severe";
+  severity_after_fix: "contained" | "elevated" | "critical" | "severe";
+  containment_actions: string[];
+}
+
+export interface FailureForecast {
+  scope: "single-service" | "regional" | "multi-region" | "platform-wide";
+  recurrence_probability: number;
+  confidence: "medium" | "high";
+  primary_risk_driver: string;
+  executive_summary: string;
+  regional_risk: Array<{
+    region: string;
+    risk: number;
+  }>;
+}
+
 export interface IncidentDetail extends IncidentRecord {
   debt_scores: Array<{
     service_name: string;
@@ -82,5 +105,7 @@ export interface IncidentDetail extends IncidentRecord {
   }>;
   matches: IncidentMatch[];
   ai_recommendation: AiRecommendation | null;
+  blast_radius_simulation: BlastRadiusSimulation | null;
+  failure_forecast: FailureForecast | null;
   warnings: IncidentWarnings;
 }

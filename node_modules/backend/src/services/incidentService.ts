@@ -34,6 +34,295 @@ type ArtifactRow = {
   terraform_tf: string;
 };
 
+type SimulationSeverity = "contained" | "elevated" | "critical" | "severe";
+
+type BlastRadiusSimulation = {
+  directly_impacted_services: string[];
+  downstream_services: string[];
+  affected_regions: string[];
+  likely_entry_points: string[];
+  estimated_user_impact: string;
+  severity_if_unfixed: SimulationSeverity;
+  severity_after_fix: SimulationSeverity;
+  containment_actions: string[];
+};
+
+type ForecastScope =
+  | "single-service"
+  | "regional"
+  | "multi-region"
+  | "platform-wide";
+
+type FailureForecast = {
+  scope: ForecastScope;
+  recurrence_probability: number;
+  confidence: "medium" | "high";
+  primary_risk_driver: string;
+  executive_summary: string;
+  regional_risk: Array<{
+    region: string;
+    risk: number;
+  }>;
+};
+
+const serviceDependencyGraph: Record<string, string[]> = {
+  "payments-service": ["checkout-api", "orders-db", "auth-service", "event-bus"],
+  "checkout-api": ["payments-service", "edge-api", "auth-service"],
+  "orders-db": ["payments-service", "analytics-pipeline"],
+  "auth-service": ["api-gateway", "session-service"],
+  "edge-api": ["traffic-router", "auth-service", "rate-limit-service"],
+  "traffic-router": ["edge-api", "cdn-control-plane"],
+  "notifications-worker": ["email-provider", "push-gateway", "job-queue"],
+  "catalog-api": ["redis-cache", "search-service", "pricing-service"],
+  "redis-cache": ["catalog-api", "product-renderer"],
+  "session-service": ["api-gateway", "mobile-auth-gateway"],
+  "api-gateway": ["edge-api", "auth-service"],
+  "platform-core": ["event-bus", "observability-stack", "config-service"]
+};
+
+const serviceRegions: Record<string, string[]> = {
+  "payments-service": ["us-east-1", "eu-west-1"],
+  "checkout-api": ["us-east-1", "eu-west-1"],
+  "orders-db": ["us-east-1"],
+  "auth-service": ["us-east-1", "ap-south-1"],
+  "edge-api": ["us-east-1", "eu-west-1", "ap-south-1"],
+  "traffic-router": ["global-edge", "us-east-1"],
+  "notifications-worker": ["us-east-1"],
+  "catalog-api": ["us-east-1", "eu-west-1"],
+  "redis-cache": ["us-east-1", "eu-west-1"],
+  "session-service": ["us-east-1", "eu-west-1"],
+  "api-gateway": ["global-edge", "us-east-1", "eu-west-1"],
+  "platform-core": ["us-east-1", "eu-west-1", "ap-south-1"]
+};
+
+function toSimulationSeverity(blastRadius: BlastRadius): SimulationSeverity {
+  if (blastRadius === "critical") return "severe";
+  if (blastRadius === "high") return "critical";
+  if (blastRadius === "medium") return "elevated";
+  return "contained";
+}
+
+function reduceSimulationSeverity(
+  severity: SimulationSeverity
+): SimulationSeverity {
+  if (severity === "severe") return "critical";
+  if (severity === "critical") return "elevated";
+  if (severity === "elevated") return "contained";
+  return "contained";
+}
+
+function buildContainmentActions(trigger: string, fixCategory: string) {
+  const actions = [
+    "Freeze risky deploys and configuration changes touching the impacted services.",
+    "Shift traffic or enable degraded mode for the highest-risk entry points.",
+    "Escalate to the owning SRE and service team with the predicted blast radius."
+  ];
+
+  if (trigger === "db_saturation") {
+    actions.unshift(
+      "Throttle expensive read paths and redirect eligible read traffic to replicas."
+    );
+  } else if (trigger === "memory_leak") {
+    actions.unshift(
+      "Roll back the most recent worker release and increase buffer capacity for the queue."
+    );
+  } else if (trigger === "config_drift") {
+    actions.unshift(
+      "Pin the last known-good configuration and block further rollout propagation."
+    );
+  } else if (trigger === "cache_stampede") {
+    actions.unshift(
+      "Enable stale-while-revalidate or request coalescing before cache refill accelerates."
+    );
+  } else if (trigger === "deploy_regression") {
+    actions.unshift(
+      "Run synthetic checks on the latest release and prepare rollback for the affected path."
+    );
+  }
+
+  if (fixCategory === "terraform_guard") {
+    actions.push("Apply an infrastructure policy gate before reopening rollout access.");
+  } else if (fixCategory === "runbook") {
+    actions.push("Update the incident playbook so the next responder can contain impact faster.");
+  }
+
+  return actions.slice(0, 4);
+}
+
+function buildBlastRadiusSimulation(
+  dna:
+    | {
+        trigger: string;
+        blast_radius: BlastRadius;
+        fix_category: string;
+        affected_services: string[];
+      }
+    | null
+): BlastRadiusSimulation | null {
+  if (!dna) {
+    return null;
+  }
+
+  const directlyImpactedServices =
+    dna.affected_services.length > 0 ? dna.affected_services : ["platform-core"];
+  const downstreamServices = Array.from(
+    new Set(
+      directlyImpactedServices.flatMap(
+        (service) => serviceDependencyGraph[service] ?? ["observability-stack"]
+      )
+    )
+  ).filter((service) => !directlyImpactedServices.includes(service));
+
+  const affectedRegions = Array.from(
+    new Set(
+      [...directlyImpactedServices, ...downstreamServices].flatMap(
+        (service) => serviceRegions[service] ?? ["us-east-1"]
+      )
+    )
+  );
+
+  const likelyEntryPoints =
+    dna.trigger === "db_saturation"
+      ? ["checkout flow", "payment authorization API", "replica read traffic"]
+      : dna.trigger === "config_drift"
+      ? ["edge routing", "public API traffic", "deployment control plane"]
+      : dna.trigger === "memory_leak"
+      ? ["background jobs", "notification delivery", "queue backlog"]
+      : dna.trigger === "cache_stampede"
+      ? ["product detail page", "catalog search", "cache warmup path"]
+      : dna.trigger === "deploy_regression"
+      ? ["mobile login", "session refresh", "API gateway release path"]
+      : ["shared control plane", "cross-service dependencies", "manual operator workflows"];
+
+  const estimatedUserImpact =
+    dna.blast_radius === "critical"
+      ? "High risk of customer-visible disruption across primary request paths within minutes."
+      : dna.blast_radius === "high"
+      ? "Likely partial outage affecting multiple services and one or more regions."
+      : dna.blast_radius === "medium"
+      ? "Moderate user-facing degradation with spillover into adjacent services if untreated."
+      : "Mostly contained to a narrow operational surface with limited end-user exposure.";
+
+  const severityIfUnfixed = toSimulationSeverity(dna.blast_radius);
+  const severityAfterFix = reduceSimulationSeverity(severityIfUnfixed);
+
+  return {
+    directly_impacted_services: directlyImpactedServices,
+    downstream_services: downstreamServices,
+    affected_regions: affectedRegions,
+    likely_entry_points: likelyEntryPoints,
+    estimated_user_impact: estimatedUserImpact,
+    severity_if_unfixed: severityIfUnfixed,
+    severity_after_fix: severityAfterFix,
+    containment_actions: buildContainmentActions(dna.trigger, dna.fix_category)
+  };
+}
+
+function buildFailureForecast(
+  dna:
+    | {
+        trigger: string;
+        blast_radius: BlastRadius;
+        fix_category: string;
+        affected_services: string[];
+        recurrence_days: number;
+      }
+    | null
+): FailureForecast | null {
+  if (!dna) {
+    return null;
+  }
+
+  const probabilityByTrigger: Record<string, number> = {
+    db_saturation: 78,
+    memory_leak: 68,
+    config_drift: 74,
+    cache_stampede: 71,
+    deploy_regression: 63,
+    novel_incident: 57
+  };
+
+  const baseProbability =
+    probabilityByTrigger[dna.trigger] ??
+    (dna.recurrence_days < 15 ? 70 : dna.recurrence_days <= 30 ? 61 : 48);
+
+  const recurrenceAdjustment =
+    dna.recurrence_days < 10 ? 8 : dna.recurrence_days < 20 ? 4 : 0;
+
+  const blastAdjustment =
+    dna.blast_radius === "critical"
+      ? 8
+      : dna.blast_radius === "high"
+      ? 5
+      : dna.blast_radius === "medium"
+      ? 2
+      : 0;
+
+  const recurrenceProbability = Math.min(
+    92,
+    baseProbability + recurrenceAdjustment + blastAdjustment
+  );
+
+  const scope: ForecastScope =
+    dna.trigger === "novel_incident"
+      ? "platform-wide"
+      : dna.affected_services.length >= 3 || dna.blast_radius === "critical"
+      ? "multi-region"
+      : dna.blast_radius === "high"
+      ? "regional"
+      : "single-service";
+
+  const directlyKnownRegions = Array.from(
+    new Set(
+      dna.affected_services.flatMap((service) => serviceRegions[service] ?? ["us-east-1"])
+    )
+  );
+
+  const regionalRisk = directlyKnownRegions.map((region, index) => {
+    const spreadPenalty = scope === "platform-wide" ? 10 : scope === "multi-region" ? 6 : 0;
+    const positionPenalty = index * 4;
+    return {
+      region,
+      risk: Math.max(
+        28,
+        Math.min(95, recurrenceProbability + spreadPenalty - positionPenalty)
+      )
+    };
+  });
+
+  const primaryRiskDriver =
+    dna.trigger === "db_saturation"
+      ? "Database saturation can quickly propagate through checkout and auth dependencies."
+      : dna.trigger === "memory_leak"
+      ? "Long-running worker pressure can silently build until queues and retries overflow."
+      : dna.trigger === "config_drift"
+      ? "Configuration mismatches can spread across regions before validation catches them."
+      : dna.trigger === "cache_stampede"
+      ? "Cache refill storms can amplify instantly into cross-service traffic spikes."
+      : dna.trigger === "deploy_regression"
+      ? "Release regressions can expand through shared gateways and client paths after deploy."
+      : "The failure mode is novel enough that existing guardrails may not localize recurrence.";
+
+  const executiveSummary =
+    scope === "platform-wide"
+      ? "The next recurrence is likely to escape a single team boundary and affect shared platform surfaces unless stronger controls are added."
+      : scope === "multi-region"
+      ? "This incident has a strong chance of spreading across multiple regions or user entry points if the prevention work is delayed."
+      : scope === "regional"
+      ? "The recurrence risk is concentrated in a region-sized blast radius with meaningful spillover into adjacent services."
+      : "The recurrence risk is currently concentrated in a narrow service area, but repeated triggers could widen the outage footprint.";
+
+  return {
+    scope,
+    recurrence_probability: recurrenceProbability,
+    confidence:
+      dna.trigger === "novel_incident" || dna.recurrence_days > 20 ? "medium" : "high",
+    primary_risk_driver: primaryRiskDriver,
+    executive_summary: executiveSummary,
+    regional_risk: regionalRisk
+  };
+}
+
 function safeJsonParseArray(value: string | null | undefined): string[] {
   if (!value) return [];
   try {
@@ -267,6 +556,19 @@ export function getIncidentById(incidentId: string) {
     ? "IncidentBrain could not confidently solve this incident automatically. Please review manually and create the fix with an SRE or engineering owner."
     : null;
 
+  const normalizedDna = dna
+    ? {
+        title: dna.title,
+        trigger: dna.trigger,
+        detection_gap: dna.detection_gap,
+        blast_radius: dna.blast_radius,
+        fix_category: dna.fix_category,
+        affected_services: safeJsonParseArray(dna.affected_services),
+        summary: dna.summary,
+        recurrence_days: dna.recurrence_days
+      }
+    : null;
+
   return {
     id: incident.id,
     source_text: incident.source_text,
@@ -275,18 +577,7 @@ export function getIncidentById(incidentId: string) {
     pr_status: incident.pr_status,
     created_at: incident.created_at,
     resolved_at: incident.resolved_at,
-    dna: dna
-      ? {
-          title: dna.title,
-          trigger: dna.trigger,
-          detection_gap: dna.detection_gap,
-          blast_radius: dna.blast_radius,
-          fix_category: dna.fix_category,
-          affected_services: safeJsonParseArray(dna.affected_services),
-          summary: dna.summary,
-          recurrence_days: dna.recurrence_days
-        }
-      : null,
+    dna: normalizedDna,
     artifacts: manualReviewRequired
       ? null
       : artifacts
@@ -299,6 +590,8 @@ export function getIncidentById(incidentId: string) {
     debt_scores: debtRows,
     matches,
     ai_recommendation: aiRecommendation,
+    blast_radius_simulation: buildBlastRadiusSimulation(normalizedDna),
+    failure_forecast: buildFailureForecast(normalizedDna),
     warnings: {
       lowHistoricalConfidence,
       openAiUnavailable,
